@@ -15,14 +15,16 @@ export async function GET() {
 }
 
 function parseMultipleTasks(text) {
-  const separators = /(?=\s+(?:هو|واكلم|وكلم|وهكلم|واروح|وهروح|واعمل|وهعمل|وانزل|وهنزل|وبعدين|وبعدها|وكمان|كمان|ثم)\s+)/g;
+  // 1. ضفنا "و" لوحدها، و "والله" عشان المايك بيغلط فيها كتير
+  const separators = /(?=\s+(?:هو|واكلم|وكلم|وهكلم|واروح|وهروح|واعمل|وهعمل|وانزل|وهنزل|وبعدين|وبعدها|وكمان|كمان|ثم|و|والله)\s+)/g;
   const chunks = text.split(separators).filter(chunk => chunk.trim() !== "");
 
   let tasks = [];
   let lastDateOffset = 0;
 
   for (let chunk of chunks) {
-    let cleanTitle = chunk.replace(/^\s*(هو|وبعدين|وبعدها|وكمان|كمان|ثم)\s*/g, "").trim();
+    // 2. تنظيف الكلمات الفاصلة من بداية المهمة
+    let cleanTitle = chunk.replace(/^\s*(هو|وبعدين|وبعدها|وكمان|كمان|ثم|والله|و)\s*/g, "").trim();
     cleanTitle = cleanTitle.replace(/^و(?=[أاإتثجحخدذرزسشصضطظعغفقكلمنهوي])/g, "").trim();
     
     if (!cleanTitle) continue;
@@ -41,8 +43,8 @@ function parseMultipleTasks(text) {
     }
     dueDate.setDate(dueDate.getDate() + lastDateOffset);
 
-    // تظبيط الساعات والدقايق
-    const timeMatch = cleanTitle.match(/الساع[ةه]\s*(\d+)(?::(\d+))?/);
+    // 3. التعديل الأهم: لقط الوقت حتى لو مفيش كلمة "الساعة" (زي 5:00 أو 10)
+    const timeMatch = cleanTitle.match(/(?:الساع[ةه]\s*)?(\d{1,2})(?::(\d{2}))?\s*(الصبح|صباح[ااً]?|بالليل|مسا[ءااً]?|العصر|المغرب)?/);
     if (timeMatch) {
       hours = parseInt(timeMatch[1]);
       if (timeMatch[2]) {
@@ -65,13 +67,12 @@ function parseMultipleTasks(text) {
     
     dueDate.setHours(hours, mins, 0, 0);
 
-    // السطر السحري الجديد: هيمسح كلمة "الساعة كذا" والكلمات اللي بتدل على الوقت من اسم التاسك نفسه
-    cleanTitle = cleanTitle.replace(/\s*الساع[ةه]\s*\d+(?::\d+)?\s*(الصبح|صباح[ااً]?|بالليل|مسا[ءااً]?|العصر|المغرب)?/g, "").trim();
+    // 4. مسح الوقت من اسم المهمة عشان تظهر نضيفة
+    cleanTitle = cleanTitle.replace(/(?:الساع[ةه]\s*)?\d{1,2}(?::\d{2})?\s*(الصبح|صباح[ااً]?|بالليل|مسا[ءااً]?|العصر|المغرب)?/g, "").trim();
 
-    // مسح كلمات الأيام برضه عشان التاسك يكون نضيف جداً
+    // مسح كلمات الأيام
     cleanTitle = cleanTitle.replace(/\s*(بكره|بكرة|بعد بكره|النهارده|اليوم|غدا)\s*/g, "").trim();
 
-    // لو بعد التنضيف ده كله التاسك بقى فاضي، نتجاهله
     if (!cleanTitle) continue;
 
     tasks.push({

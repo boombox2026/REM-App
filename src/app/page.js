@@ -21,6 +21,14 @@ export default function Home() {
   
   // حالة شاشة الترحيب
   const [showIntro, setShowIntro] = useState(true);
+  
+  // الحالة الجديدة اللي هتحل مشكلة الـ Hydration
+  const [isMounted, setIsMounted] = useState(false);
+
+  // أول ما المتصفح يحمل، هنخليها true
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // مؤقت شاشة الترحيب
   useEffect(() => {
@@ -30,6 +38,7 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, []);
 
+  // جلب المهام
   useEffect(() => {
     fetch("/api/tasks")
       .then((res) => res.json())
@@ -39,6 +48,14 @@ export default function Home() {
         }
       });
   }, []);
+
+  // لو الصفحة لسه محملتش بالكامل على المتصفح، هنعرض خلفية سودة بس عشان نمنع الإيرور
+  if (!isMounted) {
+    return <div className="min-h-screen bg-[#050505]"></div>;
+  }
+
+  // باقي الدوال زي ما هي (toggleTask, deleteTask, startListening)
+  // ...
 
   const toggleTask = async (id, currentStatus) => {
     setTasks(tasks.map(t => t.id === id ? { ...t, isCompleted: !currentStatus } : t));
