@@ -14,3 +14,12 @@ model Task {
   isCompleted Boolean  @default(false) // غيرنا الاسم هنا عشان يطابق كود الواجهة
   createdAt   DateTime @default(now())
 }
+
+
+model Subscription {
+  id        Int      @id @default(autoincrement())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}

@@ -2,6 +2,18 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
+// دالة مساعدة لتحويل المفتاح لنسخة يفهمها المتصفح (خليناها بره الدالة الرئيسية)
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/\-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
 export default function Home() {
   const [transcript, setTranscript] = useState("");
   const [isListening, setIsListening] = useState(false);
@@ -10,7 +22,7 @@ export default function Home() {
   // حالة شاشة الترحيب
   const [showIntro, setShowIntro] = useState(true);
 
-  // مؤقت شاشة الترحيب (هتختفي بعد 3 ثواني ونص)
+  // مؤقت شاشة الترحيب
   useEffect(() => {
     const timer = setTimeout(() => {
       setShowIntro(false);
@@ -45,6 +57,37 @@ export default function Home() {
       body: JSON.stringify({ id })
     });
   };
+
+  // دالة تفعيل الإشعارات اللي ضفناها
+  async function subscribeToNotifications() {
+    if ("serviceWorker" in navigator && "PushManager" in window) {
+      try {
+        const register = await navigator.serviceWorker.register("/sw.js");
+        const publicVapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+        const convertedVapidKey = urlBase64ToUint8Array(publicVapidKey);
+
+        const subscription = await register.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: convertedVapidKey,
+        });
+
+        await fetch("/api/subscribe", {
+          method: "POST",
+          body: JSON.stringify(subscription),
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+
+        alert("تم تفعيل الإشعارات بنجاح يا هندسة! 🚀");
+      } catch (error) {
+        console.error("مشكلة في التفعيل:", error);
+        alert("حصلت مشكلة في تفعيل الإشعارات.");
+      }
+    } else {
+      alert("المتصفح بتاعك مش بيدعم الإشعارات للأسف.");
+    }
+  }
 
   const startListening = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -114,7 +157,6 @@ export default function Home() {
 
       <AnimatePresence mode="wait">
         {showIntro ? (
-          /* شاشة الترحيب (الأنيميشن) */
           <motion.div
             key="intro-screen"
             initial={{ opacity: 0 }}
@@ -141,7 +183,6 @@ export default function Home() {
             </motion.p>
           </motion.div>
         ) : (
-          /* الواجهة الرئيسية */
           <motion.div 
             key="main-app"
             initial={{ opacity: 0, y: 20 }}
@@ -152,7 +193,6 @@ export default function Home() {
             <div className="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[600px] h-[500px] bg-indigo-600/10 blur-[150px] rounded-full pointer-events-none"></div>
 
             <div className="text-center mb-14 relative z-10">
-              {/* حل مشكلة القص: ضفنا leading-relaxed و py-2 */}
               <h1 className="text-5xl font-bold mb-2 tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-indigo-300 via-white to-violet-300 drop-shadow-sm leading-relaxed py-2">
                 مساعدك الشخصي
               </h1>
@@ -185,7 +225,15 @@ export default function Home() {
 
             <div className="w-full max-w-lg px-4 z-10">
               <div className="flex items-center justify-between mb-8 border-b border-white/[0.06] pb-5">
-                <h2 className="text-2xl font-semibold text-white">المهام القادمة</h2>
+                <div className="flex items-center gap-4">
+                  <h2 className="text-2xl font-semibold text-white">المهام القادمة</h2>
+                  <button 
+                    onClick={subscribeToNotifications}
+                    className="text-xs bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-3 py-1.5 rounded-full hover:bg-indigo-500/40 transition-all font-medium flex items-center gap-1"
+                  >
+                    تفعيل الإشعارات 🔔
+                  </button>
+                </div>
                 <span className="bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 py-1.5 px-4 rounded-full text-sm font-medium">
                   {tasks.length} مهام
                 </span>
