@@ -3,9 +3,8 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// دالة التحليل المحلي المحسنة (لفصل الهمزات وفهم الكسور)
+// دالة التحليل المحلي المحسنة (بالترحيل التلقائي للغد)
 function parseMultipleTasks(text) {
-  // ضفنا كل الكلمات بالهمزات ومن غير عشان يفصل المهام صح 100%
   const separators = /(?=\s+(?:هو|واكلم|وأكلم|وكلم|وهكلم|واروح|وأروح|وهروح|واعمل|وأعمل|وهعمل|وانزل|وأنزل|وهنزل|وبعدين|وبعدها|وكمان|كمان|ثم|و|والله|وارجع|وأرجع|وهارجع|وعايز|عايز|واطلع|وأطلع|وهطلع)\s+)/g;
   const chunks = text.split(separators).filter(chunk => chunk.trim() !== "");
 
@@ -32,18 +31,18 @@ function parseMultipleTasks(text) {
     let subtractHour = false;
     if (cleanTitle.includes("الا ربع") || cleanTitle.includes("إلا ربع")) {
         mins = 45;
-        subtractHour = true; // عشان 3 الا ربع تبقى 2:45
+        subtractHour = true;
     }
 
     const timeMatch = cleanTitle.match(/(?:الساع[ةه]\s*)?(\d{1,2})(?::(\d{2}))?\s*(الصبح|صباح[ااً]?|بالليل|مسا[ءااً]?|العصر|المغرب|الظهر)?/);
     
     if (timeMatch) {
       hours = parseInt(timeMatch[1]);
-      if (timeMatch[2]) mins = parseInt(timeMatch[2]); // لو المستخدم قالها 3:30
+      if (timeMatch[2]) mins = parseInt(timeMatch[2]); 
 
       if (subtractHour) {
           hours -= 1;
-          if (hours === 0) hours = 12;
+          if (hours <= 0) hours += 12;
       }
 
       const period = timeMatch[3] || "";
@@ -57,20 +56,27 @@ function parseMultipleTasks(text) {
     
     let isoString = null;
     if (hours !== null) {
-      let baseDate = new Date();
-      baseDate.setUTCHours(baseDate.getUTCHours() + 3); 
-      baseDate.setUTCDate(baseDate.getUTCDate() + lastDateOffset);
+      let now = new Date();
+      now.setUTCHours(now.getUTCHours() + 3); // ضبط التوقيت لمصر
 
-      const yyyy = baseDate.getUTCFullYear();
-      const mm = String(baseDate.getUTCMonth() + 1).padStart(2, '0');
-      const dd = String(baseDate.getUTCDate()).padStart(2, '0');
-      const hh = String(hours).padStart(2, '0');
-      const mn = String(mins).padStart(2, '0');
+      let targetDate = new Date(now);
+      targetDate.setUTCDate(targetDate.getUTCDate() + lastDateOffset);
+      targetDate.setUTCHours(hours, mins, 0, 0);
+
+      // الترحيل التلقائي لليوم اللي بعده لو الوقت اللي قاله المستخدم كان عدّى في نفس اليوم
+      if (lastDateOffset === 0 && targetDate < now) {
+          targetDate.setUTCDate(targetDate.getUTCDate() + 1);
+      }
+
+      const yyyy = targetDate.getUTCFullYear();
+      const mm = String(targetDate.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(targetDate.getUTCDate()).padStart(2, '0');
+      const hh = String(targetDate.getUTCHours()).padStart(2, '0');
+      const mn = String(targetDate.getUTCMinutes()).padStart(2, '0');
       
       isoString = `${yyyy}-${mm}-${dd}T${hh}:${mn}:00+03:00`;
     }
 
-    // تنظيف اسم المهمة تماماً من الوقت والكسور
     cleanTitle = cleanTitle.replace(/(?:الساع[ةه]\s*)?\d{1,2}(?::\d{2})?\s*(الصبح|صباح[ااً]?|بالليل|مسا[ءااً]?|العصر|المغرب|الظهر)?/g, "").trim();
     cleanTitle = cleanTitle.replace(/\s*(بكره|بكرة|بعد بكره|النهارده|اليوم|غدا)\s*/g, "").trim();
     cleanTitle = cleanTitle.replace(/\s*(ونص|و نص|وربع|و ربع|وتلت|و تلت|الا ربع|إلا ربع)\s*/g, "").trim();
@@ -94,7 +100,6 @@ export async function POST(request) {
     const { text } = await request.json();
     const currentTime = new Date().toLocaleString("en-US", { timeZone: "Africa/Cairo" });
 
-    // أوامر صريحة للذكاء الاصطناعي لفصل المهام وفهم الكسور
     const prompt = `
       You are a smart personal assistant. Extract tasks from the following user input in Arabic.
       Input: "${text}"
@@ -111,10 +116,11 @@ export async function POST(request) {
       ]
       
       Rules:
-      1. CRITICAL: Split EVERY distinct action into a separate task. If the user says "Call X and call Y", you MUST create TWO separate objects.
-      2. Handle Arabic time fractions properly: "ونص" means +30 minutes, "وربع" means +15 mins, "وتلت" means +20 mins, "إلا ربع" means -15 mins. Example: "3 ونص" is 15:30.
-      3. CRITICAL: You MUST append +03:00 to the end of the dueDate string. Never use 'Z'.
-      4. Do NOT wrap output in markdown code blocks like \`\`\`json. Return raw JSON array only.
+      1. CRITICAL: Split EVERY distinct action into a separate task.
+      2. FRACTIONS: You MUST handle Arabic time fractions. "ونص" = +30 mins. "وربع" = +15 mins. "وتلت" = +20 mins. "إلا ربع" = -15 mins. Example: "6 ونص" means 06:30 or 18:30.
+      3. AUTO-TOMORROW: If the user says a time (like 2 PM) and that time has ALREADY PASSED based on the Current Date and Time, you MUST set the date to TOMORROW.
+      4. You MUST append +03:00 to the end of the dueDate string. Never use 'Z'.
+      5. Do NOT wrap output in markdown code blocks like \`\`\`json. Return raw JSON array only.
     `;
 
     const apiKey = process.env.GROQ_API_KEY?.replace(/["\s]/g, '');
