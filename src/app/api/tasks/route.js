@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// دالة التحليل المحلي الذكية (بدون ترحيل متسرع لبكرة وفهم دقيق للكسور)
+// دالة التحليل المحلي الذكية والدقيقة 100%
 function parseMultipleTasks(text) {
   const separators = /(?=\s+(?:هو|واكلم|وأكلم|وكلم|وهكلم|واروح|وأروح|وهروح|واعمل|وأعمل|وهعمل|وانزل|وأنزل|وهنزل|وبعدين|وبعدها|وكمان|كمان|ثم|و|والله|وارجع|وأرجع|وهارجع|وعايز|عايز|واطلع|وأطلع|وهطلع)\s+)/g;
   const chunks = text.split(separators).filter(chunk => chunk.trim() !== "");
@@ -23,10 +23,14 @@ function parseMultipleTasks(text) {
     if (cleanTitle.includes("بكره") || cleanTitle.includes("غدا") || cleanTitle.includes("بكرة")) lastDateOffset = 1;
     else if (cleanTitle.includes("بعد بكره") || cleanTitle.includes("بعد بكرة")) lastDateOffset = 2;
     
-    // استخراج الكسور بدقة تامة
-    if (cleanTitle.includes("ونص") || cleanTitle.includes("و نص")) mins = 30;
-    else if (cleanTitle.includes("وتلت") || cleanTitle.includes("و تلت")) mins = 20;
-    else if (cleanTitle.includes("وربع") || cleanTitle.includes("و ربع")) mins = 15;
+    // استخراج الكسور بدقة شديدة وتغطية كل الاحتمالات
+    if (cleanTitle.includes("ونص") || cleanTitle.includes("و نص") || cleanTitle.includes("ونصف") || cleanTitle.includes("و نصف")) {
+        mins = 30;
+    } else if (cleanTitle.includes("وتلت") || cleanTitle.includes("و تلت") || cleanTitle.includes("وثلث")) {
+        mins = 20;
+    } else if (cleanTitle.includes("وربع") || cleanTitle.includes("و ربع")) {
+        mins = 15;
+    }
     
     let subtractHour = false;
     if (cleanTitle.includes("الا ربع") || cleanTitle.includes("إلا ربع")) {
@@ -38,7 +42,7 @@ function parseMultipleTasks(text) {
     
     if (timeMatch) {
       hours = parseInt(timeMatch[1]);
-      if (timeMatch[2]) mins = parseInt(timeMatch[2]); 
+      if (timeMatch[2]) mins = parseInt(timeMatch[2]); // لو مكتوبة بالأرقام مثلاً 3:30
 
       if (subtractHour) {
           hours -= 1;
@@ -51,7 +55,7 @@ function parseMultipleTasks(text) {
 
       if (isPM && hours < 12) hours += 12; 
       else if (isAM && hours === 12) hours = 0; 
-      else if (!isPM && !isAM && hours >= 1 && hours <= 6) hours += 12; // الافتراضي الساعات اللي بعد الظهر لو مقالش الصبح
+      else if (!isPM && !isAM && hours >= 1 && hours <= 6) hours += 12; // الافتراضي الفترات المسائية للأرقام من 1 لـ 6 لو مقالش الصبح
     }
     
     let isoString = null;
@@ -63,10 +67,9 @@ function parseMultipleTasks(text) {
       targetDate.setUTCDate(targetDate.getUTCDate() + lastDateOffset);
       targetDate.setUTCHours(hours, mins, 0, 0);
 
-      // لن يتم ترحيل الوقت لبكرة أبداً إلا لو الوقت عدى وفات عليه أكتر من ساعة، أو لو المستخدم قال "بكرة" صراحة
+      // الترحيل التلقائي الذكي: لو الوقت عدى في نفس اليوم ومقالش بكرة صراحة، يرحلها لـ بكرة أوتوماتيك
       if (lastDateOffset === 0 && targetDate < now) {
-          // لو الوقت فات بفارق بسيط (أقل من ساعة) نعتبرها النهاردة عادي، لو فات كتير ممكن نرحلها أو نسيبها زي ما تحب
-          // بس هنا هنخليها النهاردة طالما اليوم لسه مقفلش عشان متترحش لوحدها بالغلط
+          targetDate.setUTCDate(targetDate.getUTCDate() + 1);
       }
 
       const yyyy = targetDate.getUTCFullYear();
@@ -78,10 +81,10 @@ function parseMultipleTasks(text) {
       isoString = `${yyyy}-${mm}-${dd}T${hh}:${mn}:00+03:00`;
     }
 
-    // تنظيف اسم المهمة من الوقت والكسور
+    // تنظيف اسم المهمة تماماً من الوقت والكسور
     cleanTitle = cleanTitle.replace(/(?:الساع[ةه]\s*)?\d{1,2}(?::\d{2})?\s*(الصبح|صباح[ااً]?|بالليل|مسا[ءااً]?|العصر|المغرب|الظهر)?/g, "").trim();
     cleanTitle = cleanTitle.replace(/\s*(بكره|بكرة|بعد بكره|النهارده|اليوم|غدا)\s*/g, "").trim();
-    cleanTitle = cleanTitle.replace(/\s*(ونص|و نص|وربع|و ربع|وتلت|و tلت|الا ربع|إلا ربع)\s*/g, "").trim();
+    cleanTitle = cleanTitle.replace(/\s*(ونص|و نص|ونصف|و نصف|وربع|و ربع|وتلت|و tلت|الا ربع|إلا ربع)\s*/g, "").trim();
 
     if (cleanTitle) tasks.push({ title: cleanTitle, dueDate: isoString });
   }
@@ -121,8 +124,8 @@ export async function POST(request) {
         
         Rules:
         1. CRITICAL: Split EVERY distinct action into a separate task.
-        2. FRACTIONS: Handle Arabic time fractions ("ونص" = +30 mins, "وربع" = +15 mins). Example: "6 ونص" means 18:30.
-        3. DO NOT shift to tomorrow unless explicitly requested by the user ("بكرة"). Keep it for today.
+        2. FRACTIONS: Handle Arabic time fractions ("ونص" = +30 mins, "وربع" = +15 mins). Example: "3 ونص" means 15:30.
+        3. AUTO-TOMORROW: If the user specifies a time that has ALREADY PASSED today, you MUST shift the task to TOMORROW.
         4. You MUST append +03:00 to the end of the dueDate string. Never use 'Z'.
         5. Do NOT wrap output in markdown code blocks. Return raw JSON array only.
       `;
