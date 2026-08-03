@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// دالة التحليل المحلي المحسنة لقراءة الساعات بدقة
+// دالة التحليل المحلي (محدثة لتعويض فرق توقيت مصر +3)
 function parseMultipleTasks(text) {
   const separators = /(?=\s+(?:هو|واكلم|وكلم|وهكلم|واروح|وهروح|واعمل|وهعمل|وانزل|وهنزل|وبعدين|وبعدها|وكمان|كمان|ثم|و|والله|وارجع|وهارجع|ارجع|وعايز|عايز|واطلع|وهطلع|اطلع|هطلع)\s+)/g;
   const chunks = text.split(separators).filter(chunk => chunk.trim() !== "");
@@ -16,17 +16,13 @@ function parseMultipleTasks(text) {
     cleanTitle = cleanTitle.replace(/^و(?=[أاإتثجحخدذرزسشصضطظعغفقكلمنهوي])/g, "").trim();
     if (!cleanTitle) continue;
 
-    let dueDate = new Date();
-    let hours = null; // بيخليه فارغ عشان نعرف لو المستخدم مدرج وقت ولا لأ
+    let hours = null; 
     let mins = 0;
 
     if (cleanTitle.includes("بكره") || cleanTitle.includes("غدا") || cleanTitle.includes("بكرة")) lastDateOffset = 1;
     else if (cleanTitle.includes("بعد بكره") || cleanTitle.includes("بعد بكرة")) lastDateOffset = 2;
     else if (cleanTitle.includes("النهارده") || cleanTitle.includes("اليوم")) lastDateOffset = 0;
     
-    dueDate.setDate(dueDate.getDate() + lastDateOffset);
-
-    // بحث دقيق عن الساعات (سواء مكتوبة كـ 3، 5، أو الساعة 3)
     const timeMatch = cleanTitle.match(/(?:الساع[ةه]\s*)?(\d{1,2})(?::(\d{2}))?\s*(الصبح|صباح[ااً]?|بالليل|مسا[ءااً]?|العصر|المغرب|الظهر)?/);
     
     if (timeMatch) {
@@ -37,28 +33,32 @@ function parseMultipleTasks(text) {
       const isPM = period.includes("بالليل") || period.includes("مسا") || period.includes("العصر") || period.includes("المغرب") || period.includes("الظهر");
       const isAM = period.includes("الصبح") || period.includes("صباح");
 
-      // تعديل التوقيت بناءً على الفترة المسائية أو الصباحية
-      if (isPM && hours < 12) {
-        hours += 12;
-      } else if (isAM && hours === 12) {
-        hours = 0;
-      } else if (!isPM && !isAM) {
-        // لو مكشفتش كلمة ليل أو صبح، لو الساعة أقل من 12 والوقت نهاراً نفترضها سياقياً، أو نسيبها زي ما هي
-        if (hours >= 1 && hours <= 6) hours += 12; // افتراض العصر أو المساء لو قال الساعة 3 سكتة
-      }
+      if (isPM && hours < 12) hours += 12; 
+      else if (isAM && hours === 12) hours = 0; 
+      else if (!isPM && !isAM && hours >= 1 && hours <= 6) hours += 12; 
     }
     
+    let isoString = null;
     if (hours !== null) {
-      dueDate.setHours(hours, mins, 0, 0);
-    } else {
-      dueDate = null; // لو مفيش وقت مذكور، متبوظش اليوم وتخليه الساعة 12 الصبح
+      // بنجيب الوقت الحالي ونزود 3 ساعات عشان نظبطه على توقيت مصر يدوياً بعيد عن سيرفر Vercel
+      let baseDate = new Date();
+      baseDate.setUTCHours(baseDate.getUTCHours() + 3); 
+      baseDate.setUTCDate(baseDate.getUTCDate() + lastDateOffset);
+
+      const yyyy = baseDate.getUTCFullYear();
+      const mm = String(baseDate.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(baseDate.getUTCDate()).padStart(2, '0');
+      const hh = String(hours).padStart(2, '0');
+      const mn = String(mins).padStart(2, '0');
+      
+      // التريكاية هنا: بنجبره يحفظه بصيغة توقيت القاهرة
+      isoString = `${yyyy}-${mm}-${dd}T${hh}:${mn}:00+03:00`;
     }
 
-    // تنظيف اسم المهمة من الوقت والأيام
     cleanTitle = cleanTitle.replace(/(?:الساع[ةه]\s*)?\d{1,2}(?::\d{2})?\s*(الصبح|صباح[ااً]?|بالليل|مسا[ءااً]?|العصر|المغرب|الظهر)?/g, "").trim();
     cleanTitle = cleanTitle.replace(/\s*(بكره|بكرة|بعد بكره|النهارده|اليوم|غدا)\s*/g, "").trim();
 
-    if (cleanTitle) tasks.push({ title: cleanTitle, dueDate });
+    if (cleanTitle) tasks.push({ title: cleanTitle, dueDate: isoString });
   }
   return tasks;
 }
@@ -88,14 +88,15 @@ export async function POST(request) {
       [
         {
           "title": "Task name in Arabic without time or date mentions",
-          "dueDate": "ISO 8601 format for date and time if a specific time/hour is mentioned by the user, otherwise null"
+          "dueDate": "ISO 8601 format with EGYPT timezone offset +03:00 (e.g. 2026-08-03T17:00:00+03:00)"
         }
       ]
       
       Rules:
       1. Split every distinct action into a separate task.
-      2. Extract the exact hour/time mentioned by the user (e.g., if user says at 5, set the time to 17:00 or 5:00 based on context, do NOT default to 8 or 12 unless specified).
-      3. Do NOT wrap output in markdown code blocks like \`\`\`json. Return raw JSON array only.
+      2. Extract the exact hour/time mentioned.
+      3. CRITICAL: You MUST append +03:00 to the end of the dueDate string. Never use 'Z'. This forces the database to save it in Egypt's timezone.
+      4. Do NOT wrap output in markdown code blocks like \`\`\`json. Return raw JSON array only.
     `;
 
     const apiKey = process.env.GROQ_API_KEY?.replace(/["\s]/g, '');
@@ -123,11 +124,7 @@ export async function POST(request) {
       tasksData = JSON.parse(jsonString);
 
     } catch (apiError) {
-      const localParsedTasks = parseMultipleTasks(text);
-      tasksData = localParsedTasks.map(t => ({
-        title: t.title,
-        dueDate: t.dueDate ? t.dueDate.toISOString() : null
-      }));
+      tasksData = parseMultipleTasks(text);
     }
 
     const createdTasks = await Promise.all(
