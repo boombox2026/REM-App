@@ -3,16 +3,17 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// دالة التحليل المحلي (محدثة لتعويض فرق توقيت مصر +3)
+// دالة التحليل المحلي المحسنة (لفصل الهمزات وفهم الكسور)
 function parseMultipleTasks(text) {
-  const separators = /(?=\s+(?:هو|واكلم|وكلم|وهكلم|واروح|وهروح|واعمل|وهعمل|وانزل|وهنزل|وبعدين|وبعدها|وكمان|كمان|ثم|و|والله|وارجع|وهارجع|ارجع|وعايز|عايز|واطلع|وهطلع|اطلع|هطلع)\s+)/g;
+  // ضفنا كل الكلمات بالهمزات ومن غير عشان يفصل المهام صح 100%
+  const separators = /(?=\s+(?:هو|واكلم|وأكلم|وكلم|وهكلم|واروح|وأروح|وهروح|واعمل|وأعمل|وهعمل|وانزل|وأنزل|وهنزل|وبعدين|وبعدها|وكمان|كمان|ثم|و|والله|وارجع|وأرجع|وهارجع|وعايز|عايز|واطلع|وأطلع|وهطلع)\s+)/g;
   const chunks = text.split(separators).filter(chunk => chunk.trim() !== "");
 
   let tasks = [];
   let lastDateOffset = 0;
 
   for (let chunk of chunks) {
-    let cleanTitle = chunk.replace(/^\s*(هو|وبعدين|وبعدها|وكمان|كمان|ثم|والله|و|وارجع|وهارجع|ارجع|وعايز|عايز|واطلع|وهطلع|اطلع|هطلع)\s*/g, "").trim();
+    let cleanTitle = chunk.replace(/^\s*(هو|وبعدين|وبعدها|وكمان|كمان|ثم|والله|و|وارجع|وأرجع|وهارجع|وعايز|عايز|واطلع|وأطلع|وهطلع|واكلم|وأكلم|وكلم|وهكلم|واروح|وأروح|وهروح|واعمل|وأعمل|وهعمل|وانزل|وأنزل|وهنزل)\s*/g, "").trim();
     cleanTitle = cleanTitle.replace(/^و(?=[أاإتثجحخدذرزسشصضطظعغفقكلمنهوي])/g, "").trim();
     if (!cleanTitle) continue;
 
@@ -23,15 +24,31 @@ function parseMultipleTasks(text) {
     else if (cleanTitle.includes("بعد بكره") || cleanTitle.includes("بعد بكرة")) lastDateOffset = 2;
     else if (cleanTitle.includes("النهارده") || cleanTitle.includes("اليوم")) lastDateOffset = 0;
     
+    // استخراج الكسور وتحويلها لدقايق
+    if (cleanTitle.includes("ونص") || cleanTitle.includes("و نص")) mins = 30;
+    else if (cleanTitle.includes("وتلت") || cleanTitle.includes("و تلت")) mins = 20;
+    else if (cleanTitle.includes("وربع") || cleanTitle.includes("و ربع")) mins = 15;
+    
+    let subtractHour = false;
+    if (cleanTitle.includes("الا ربع") || cleanTitle.includes("إلا ربع")) {
+        mins = 45;
+        subtractHour = true; // عشان 3 الا ربع تبقى 2:45
+    }
+
     const timeMatch = cleanTitle.match(/(?:الساع[ةه]\s*)?(\d{1,2})(?::(\d{2}))?\s*(الصبح|صباح[ااً]?|بالليل|مسا[ءااً]?|العصر|المغرب|الظهر)?/);
     
     if (timeMatch) {
       hours = parseInt(timeMatch[1]);
-      if (timeMatch[2]) mins = parseInt(timeMatch[2]);
+      if (timeMatch[2]) mins = parseInt(timeMatch[2]); // لو المستخدم قالها 3:30
+
+      if (subtractHour) {
+          hours -= 1;
+          if (hours === 0) hours = 12;
+      }
 
       const period = timeMatch[3] || "";
-      const isPM = period.includes("بالليل") || period.includes("مسا") || period.includes("العصر") || period.includes("المغرب") || period.includes("الظهر");
-      const isAM = period.includes("الصبح") || period.includes("صباح");
+      const isPM = period.includes("بالليل") || period.includes("مسا") || period.includes("العصر") || period.includes("المغرب") || period.includes("الظهر") || cleanTitle.includes("بالليل") || cleanTitle.includes("مسا");
+      const isAM = period.includes("الصبح") || period.includes("صباح") || cleanTitle.includes("الصبح") || cleanTitle.includes("صباح");
 
       if (isPM && hours < 12) hours += 12; 
       else if (isAM && hours === 12) hours = 0; 
@@ -40,7 +57,6 @@ function parseMultipleTasks(text) {
     
     let isoString = null;
     if (hours !== null) {
-      // بنجيب الوقت الحالي ونزود 3 ساعات عشان نظبطه على توقيت مصر يدوياً بعيد عن سيرفر Vercel
       let baseDate = new Date();
       baseDate.setUTCHours(baseDate.getUTCHours() + 3); 
       baseDate.setUTCDate(baseDate.getUTCDate() + lastDateOffset);
@@ -51,12 +67,13 @@ function parseMultipleTasks(text) {
       const hh = String(hours).padStart(2, '0');
       const mn = String(mins).padStart(2, '0');
       
-      // التريكاية هنا: بنجبره يحفظه بصيغة توقيت القاهرة
       isoString = `${yyyy}-${mm}-${dd}T${hh}:${mn}:00+03:00`;
     }
 
+    // تنظيف اسم المهمة تماماً من الوقت والكسور
     cleanTitle = cleanTitle.replace(/(?:الساع[ةه]\s*)?\d{1,2}(?::\d{2})?\s*(الصبح|صباح[ااً]?|بالليل|مسا[ءااً]?|العصر|المغرب|الظهر)?/g, "").trim();
     cleanTitle = cleanTitle.replace(/\s*(بكره|بكرة|بعد بكره|النهارده|اليوم|غدا)\s*/g, "").trim();
+    cleanTitle = cleanTitle.replace(/\s*(ونص|و نص|وربع|و ربع|وتلت|و تلت|الا ربع|إلا ربع)\s*/g, "").trim();
 
     if (cleanTitle) tasks.push({ title: cleanTitle, dueDate: isoString });
   }
@@ -77,6 +94,7 @@ export async function POST(request) {
     const { text } = await request.json();
     const currentTime = new Date().toLocaleString("en-US", { timeZone: "Africa/Cairo" });
 
+    // أوامر صريحة للذكاء الاصطناعي لفصل المهام وفهم الكسور
     const prompt = `
       You are a smart personal assistant. Extract tasks from the following user input in Arabic.
       Input: "${text}"
@@ -88,14 +106,14 @@ export async function POST(request) {
       [
         {
           "title": "Task name in Arabic without time or date mentions",
-          "dueDate": "ISO 8601 format with EGYPT timezone offset +03:00 (e.g. 2026-08-03T17:00:00+03:00)"
+          "dueDate": "ISO 8601 format with EGYPT timezone offset +03:00 (e.g. 2026-08-03T17:30:00+03:00)"
         }
       ]
       
       Rules:
-      1. Split every distinct action into a separate task.
-      2. Extract the exact hour/time mentioned.
-      3. CRITICAL: You MUST append +03:00 to the end of the dueDate string. Never use 'Z'. This forces the database to save it in Egypt's timezone.
+      1. CRITICAL: Split EVERY distinct action into a separate task. If the user says "Call X and call Y", you MUST create TWO separate objects.
+      2. Handle Arabic time fractions properly: "ونص" means +30 minutes, "وربع" means +15 mins, "وتلت" means +20 mins, "إلا ربع" means -15 mins. Example: "3 ونص" is 15:30.
+      3. CRITICAL: You MUST append +03:00 to the end of the dueDate string. Never use 'Z'.
       4. Do NOT wrap output in markdown code blocks like \`\`\`json. Return raw JSON array only.
     `;
 
