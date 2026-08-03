@@ -337,3 +337,6 @@ export default function Home() {
     </>
   );
 }
+<p className="text-green-400 text-sm text-center mt-2 font-bold animate-pulse">
+  🚀 تم التحديث من الجهاز الجديد بنجاح
+</p>
